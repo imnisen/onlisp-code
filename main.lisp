@@ -82,15 +82,14 @@
        ,@body)))
 
 
-;; todo
 (defmacro do-tuples/o (parms source &body body)
   (if parms
       (let ((src (gensym)))
         `(prog ((,src ,source))
-            (mapc #'(lambda ,parms ,@body)
-                  ,@(map0-n #'(lambda (n) `(nthcdr ,n ,src))
-                            (- (length source)
-                               (length parms))))))))
+            (mapc (lambda ,parms ,@body)
+                  ,@(map0-n (lambda (n)
+                              `(nthcdr ,n ,src))
+                            (1- (length parms))))))))
 
 ;; todo
 (defmacro do-tuples/c (parms source &body body))
