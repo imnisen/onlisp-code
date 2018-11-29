@@ -14,7 +14,8 @@
            #:while
            #:till
            #:for
-           #:do-tuples/o))
+           #:do-tuples/o
+           #:do-tuples/c))
 
 (in-package :onlisp)
 
@@ -91,6 +92,15 @@
                               `(nthcdr ,n ,src))
                             (1- (length parms))))))))
 
-;; todo
-(defmacro do-tuples/c (parms source &body body))
+;; Don't know why code on book is that complicated
+;; And not understand it
+;; Here is a limit in the macro, length of parms should <= length of source * 2
+(defmacro do-tuples/c (parms source &body body)
+  (if parms
+      (let ((src (gensym)))
+        `(prog ((,src ,source))
+            (mapc (lambda ,parms ,@body)
+                  ,@(map0-n (lambda (n)
+                              `(append (nthcdr ,n ,src) (subseq ,src 0 ,n)))
+                            (1- (length parms))))))))
 
