@@ -15,7 +15,8 @@
            #:till
            #:for
            #:do-tuples/o
-           #:do-tuples/c))
+           #:do-tuples/c
+           #:mvdo*))
 
 (in-package :onlisp)
 
@@ -106,41 +107,51 @@
 
 ;;; Chapter 11.5
 (defmacro mvdo* (parm-cl test-cl &body body)
-  (mvdo-gen parm-cl parm-cl test-cl body))
+  (mvdo-gen parm-cl parm-cl test-cl body)) ; Use function to help generate code
 
+;; This function is mainly used as generate bind nested form, with recursive call self.
+;; And pass rebind generate task to `mvdo-rebind-gen` function
 (defun mvdo-gen (binds rebinds test body)
-  (if (null binds)
+  (if (null binds)  ;; recursive function, incase this is the last call, so binds is null while rebinds is not.
       (let ((label (gensym)))
-        `(prog nil
+        `(prog () ;; Just like `do` macro, it expand mvdo* to `prog` form, use `go` to loop
             ,label
-            (if ,(car test)
-                (return (progn ,@(cdr test))))
-            ,@body
-            ,@(mvdo-rebind-gen rebinds)
-            (go ,label)))
-      (let ((rec (mvdo-gen (cdr binds) rebinds test body)))
-        (let ((var/s (caar binds)) (expr (cadar binds))) (if (atom var/s)
-                                                             `(let ((,var/s ,expr)) ,rec) `(multiple-value-bind ,var/s ,expr ,rec))))))
+            (if ,(car test)  ;; test test-case here
+                (return (progn ,@(cdr test)))) ;; use `progn` here in case of list of clauses
+            ,@body ;; loop body
+            ,@(mvdo-rebind-gen rebinds)  ;; As init binding has done, let's generate rebind form, use function to help
+            (go ,label) ;; use `go label` to loop
+            ))
+      (let ((rec (mvdo-gen (cdr binds) rebinds test body)))  ;; recursive call self, put result in rec
+        (let ((var/s (caar binds))
+              (expr (cadar binds)))
+          (if (atom var/s)            ;; check the init-form is single value or multi value
+              `(let ((,var/s ,expr))  ;; single value case
+                 ,rec)
+              `(multiple-value-bind ,var/s ,expr  ;; multi value case
+                 ,rec)
+              )))))
+
+;; This is also a recursive function. once handle a bind.
 (defun mvdo-rebind-gen (rebinds)
   (cond ((null rebinds) nil)
-        ((< (length (car rebinds)) 3)
-         (mvdo-rebind-gen (cdr rebinds)))
-        (t
-         (cons (list (if (atom (caar rebinds))
-                         'setq
-                         'multiple-value-setq)
-                     (caar rebinds)
-                     (third (car rebinds)))
-               (mvdo-rebind-gen (cdr rebinds))))))
+        ((< (length (car rebinds)) 3) (mvdo-rebind-gen (cdr rebinds))) ;; the rebind don't have step-form, so just call next cyle
+        (t (cons  ;; use `cons` to connect all generated-rebind-forms as a list
+            (let ((var/s (caar rebinds))
+                  (expr (caddar rebinds)))
+              (if (atom var/s)  ;; check the init-form is single value or multi value  
+                  `(setq ,var/s ,expr)
+                  `(multiple-value-setq ,var/s ,expr)))
+            (mvdo-rebind-gen (cdr rebinds)) ;; call self recursively
+            ))))
 
-
-;;; example
+;;; mvdo* example
 ;; (mvdo* ((x 1 (1+ x))
 ;;         ((y z) (values 0 0) (values z x)))
 ;;     ((> x 5) (list x y z))
 ;;   (princ (list x y z)))
 
-;; Macro expand to:
+;; macro expand to:
 
 ;; (LET ((X 1))
 ;;   (MULTIPLE-VALUE-BIND (Y Z)
