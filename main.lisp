@@ -16,12 +16,14 @@
            #:for
            #:do-tuples/o
            #:do-tuples/c
-           #:mvdo*))
+           #:mvdo*
+           #:mvpsetq
+           ))
 
 (in-package :onlisp)
 
 
-
+
 ;;; chapter 4.5
 ;;; some map funcions
 (defun mapa-b (fn a b &optional (step 1))
@@ -42,6 +44,7 @@
       ((funcall test-fn i) (nreverse result))
     (push (funcall fn i) result)))
 
+
 
 ;;; chapter 11.3
 (defmacro in (obj &rest choices)
@@ -64,6 +67,8 @@
 (defmacro in-if (fn &rest choices)
   `(or ,@(mapcar (lambda (x) `(funcall ,fn ,x))
                  choices)))
+
+
 
 ;;; chapter 11.4
 (defmacro while (test &body body)
@@ -105,7 +110,32 @@
                               `(append (nthcdr ,n ,src) (subseq ,src 0 ,n)))
                             (1- (length parms))))))))
 
-;;; Chapter 11.5
+
+
+;;; Chapter 11.5  mvdo*
+
+;;; mvdo* example
+;; (mvdo* ((x 1 (1+ x))
+;;         ((y z) (values 0 0) (values z x)))
+;;     ((> x 5) (list x y z))
+;;   (princ (list x y z)))
+
+;; macro expand to:
+
+;; (LET ((X 1))
+;;   (MULTIPLE-VALUE-BIND (Y Z)
+;;       (VALUES 0 0)
+;;     (PROG ()
+;;        #:G593
+;;        (IF (> X 5)
+;;            (RETURN (PROGN (LIST X Y Z))))
+;;        (PRINC (LIST X Y Z))
+;;        (SETQ X (1+ X))
+;;        (MULTIPLE-VALUE-SETQ (Y Z) (VALUES Z X))
+;;        (GO #:G593))))
+
+
+
 (defmacro mvdo* (parm-cl test-cl &body body)
   (mvdo-gen parm-cl parm-cl test-cl body)) ; Use function to help generate code
 
@@ -145,23 +175,143 @@
             (mvdo-rebind-gen (cdr rebinds)) ;; call self recursively
             ))))
 
-;;; mvdo* example
-;; (mvdo* ((x 1 (1+ x))
-;;         ((y z) (values 0 0) (values z x)))
-;;     ((> x 5) (list x y z))
-;;   (princ (list x y z)))
+
+
+
+;; chapter 11.5
+;; mvpsetq
+
+;; --- My own solution ---
+
+;; Macro expand example:
+(let ((w 0) (x 1) (y 2) (z 3))
+  (mvpsetq (w x x) (values 'a 'b) (y z) (values w x))
+  (list w x y z))
+
+;; (LET ((W 0) (X 1) (Y 2) (Z 3))
+;;   (MULTIPLE-VALUE-BIND (#:G592 #:G593 #:G594)
+;;       (VALUES 'A 'B)
+;;     (MULTIPLE-VALUE-BIND (#:G595 #:G596)
+;;         (VALUES W X)
+;;       (PSETQ W #:G592
+;;              X #:G593
+;;              X #:G594
+;;              Y #:G595
+;;              Z #:G596)))
+;;   (LIST W X Y Z))
+
+;; use gen-cl to generate expression, because I need use recursion for multiple-value-bind
+;; gen-lst is used for collect generate gensyms for psetq use
+(defmacro mvpsetq-1 (&rest args)  ;; Use *-1 name to escape confilit with latter book solution
+  (let (gen-lst)
+    (gen-cl args args gen-lst)))
+
+;; helper func for mvpsetq
+(defun gen-cl (bind-cls set-cls gen-lst)
+  (if (null bind-cls)
+      `(psetq ,@(shuffle-1 (flatten-1 (loop :for x :in set-cls :by #'cddr :collect x))  ;; the loop here is to collect ((w x) (values 'a 'b) (y z) (values w x)) -> ((w x) (y z))
+                           gen-lst)) ;; generate`( psetq x1 v1 x2 v2)` expression
+      (let ((g-lst (mapcar #'(lambda (x) (gensym))
+                           (first bind-cls))))  ;; generate list of gensyms for multiple-value-bind in this recursive
+        (if (listp (first bind-cls))  ;; let's decide use `multiple-value-bind` or `let` to bind
+            `(multiple-value-bind ,g-lst
+                 ,(second bind-cls)
+               ,(gen-cl (cddr bind-cls) set-cls (append gen-lst g-lst)))  ;; recusively call self, accumlate genyms to gen-list, for latter psetq
+            `(let (((first bind-cls) ,(second bind-cls)))
+               ,(gen-cl (cddr bind-cls) set-cls (append gen-lst g-lst)))  ;; recusively call self, accumlate genyms to gen-list, for latter psetq
+            )
+        )))  
+
+
+;; helper func, used to extract symbols need binding
+;; ONLISP> (flatten-1 '(1 (2) 3 (4 (5) 6)))
+;; (1 2 3 4 (5) 6)
+(defun flatten-1 (l)
+  (loop :with result := '()
+        :for x :in l
+        :if (listp x)
+        :do (setf result (append result x))
+        :else
+        :do (setf result (append result (list x)))
+        :finally (return result)))
+
+
+;; helper func, used to create expression for psetq with a list of gensyms and a list of set symbols
+;; ONLISP> (shuffle-1 '(1 2 3) '(a b c))
+;; (1 A 2 B 3 C)
+(defun shuffle-1 (l1 l2)  ;; name it shuffle-1 to escape shuffle fun in below, although they do same.
+  (let (result)
+    (mapcar #'(lambda (x y) (push x result) (push y result)) 
+            l1
+            l2)
+    (nreverse result)))
+
+
+;; --- My own solution end ---
+
+;; --- Book solution ---
+
+
+
+(defmacro mvpsetq (&rest args)
+  (let* ((pairs (group args 2))  ;; Group args to ( ((w x) (values 'a 'b))   ( (y z) (values w x))  )
+         (syms (mapcar #'(lambda (p)
+                           (mapcar #'(lambda (x) (gensym)) (ensure-list (car p))))
+                       pairs))) ;; Pregenerate '(gensym1 ...) for latter bind use
+    (labels ((rec (ps ss)
+               (if (null ps)
+                   `(setq ,@(mapcan #'(lambda (p s) (shuffle (ensure-list (car p)) s))
+                                    pairs syms))  
+                   (let ((body (rec (cdr ps) (cdr ss)))) ;; recursive call self, because we have Got the syms list , not like my-own solution, generate in each recursion.
+                     (let ((var/s (caar ps))
+                           (expr (cadar ps)))
+                       (if (consp var/s)
+                           `(multiple-value-bind ,(car ss) ,expr
+                              ,body)
+                           `(let ((,@(car ss) ,expr))
+                              ,body)))))))
+      (rec pairs syms))))
+
+
+(defun shuffle (x y)
+  (cond ((null x) y)
+        ((null y) x)
+        (t (list* (car x) (car y)
+                  (shuffle (cdr x) (cdr y))))))
+
+(defun group (source n)
+  "Group source into each with n numbers of elements unless the last is not enough"
+  (when (<= n 0) (error "length not greater than zero"))
+  (labels ((rec (source acc)
+             (let ((rest (nthcdr n source)))
+               (if (consp rest)
+                   (rec rest (cons (subseq source 0 n) acc))
+                   (nreverse (cons source acc))))))
+    (if source (rec source nil) nil)))
+
+;; --- Book solution end ---
+
+
+
+;;; chapter 11.5 mvdo
+
+
+;; mvdo example
+;; (mvdo ((x 1 (1+ x))
+;;        ((y z) (values 0 0) (values z x)))
+;;       ((> x 5) (list x y z))
+;;       (princ (list x y z)))
 
 ;; macro expand to:
 
-;; (LET ((X 1))
-;;   (MULTIPLE-VALUE-BIND (Y Z)
-;;       (VALUES 0 0)
-;;     (PROG ()
-;;        #:G593
-;;        (IF (> X 5)
-;;            (RETURN (PROGN (LIST X Y Z))))
-;;        (PRINC (LIST X Y Z))
-;;        (SETQ X (1+ X))
-;;        (MULTIPLE-VALUE-SETQ (Y Z) (VALUES Z X))
-;;        (GO #:G593))))
+
+;; 不同于mvdo*, mvdo需要一次性将参数初始form提取出来，采用mvpsetq初始赋值， 这样防止参数赋值前后顺序影响，
+;; 另外, 由于含有多值赋值，所以需要用到上面定义的psetq的多值版本mvpsetq。
+;; 同样的，原来的rebind form采用多个 setq/multiple-value-bind 前后依次更新值，现在也需要mvpsetq 来并行更新值了
+;; 所以整体就没有递归调用生成了，因为不需要嵌套了
+
+;; TODO
+;; (defmacro mvdo (parm-cl test-cl &body body)
+;;   (let ((lable (gensym))
+;;         )))
 
