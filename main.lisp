@@ -184,9 +184,9 @@
 ;; --- My own solution ---
 
 ;; Macro expand example:
-(let ((w 0) (x 1) (y 2) (z 3))
-  (mvpsetq (w x x) (values 'a 'b) (y z) (values w x))
-  (list w x y z))
+;; (let ((w 0) (x 1) (y 2) (z 3))
+;;   (mvpsetq (w x x) (values 'a 'b) (y z) (values w x))
+;;   (list w x y z))
 
 ;; (LET ((W 0) (X 1) (Y 2) (Z 3))
 ;;   (MULTIPLE-VALUE-BIND (#:G592 #:G593 #:G594)
@@ -260,7 +260,7 @@
                        pairs))) ;; Pregenerate '(gensym1 ...) for latter bind use
     (labels ((rec (ps ss)
                (if (null ps)
-                   `(setq ,@(mapcan #'(lambda (p s) (shuffle (ensure-list (car p)) s))
+                   `(setq ,@(mapcan #'(lambda (p s) (shuffle-it (ensure-list (car p)) s))
                                     pairs syms))  
                    (let ((body (rec (cdr ps) (cdr ss)))) ;; recursive call self, because we have Got the syms list , not like my-own solution, generate in each recursion.
                      (let ((var/s (caar ps))
@@ -272,12 +272,12 @@
                               ,body)))))))
       (rec pairs syms))))
 
-
-(defun shuffle (x y)
+;; Rename to shuffle-it, avoid conflict with alexandria:shuffle
+(defun shuffle-it (x y)
   (cond ((null x) y)
         ((null y) x)
         (t (list* (car x) (car y)
-                  (shuffle (cdr x) (cdr y))))))
+                  (shuffle-it (cdr x) (cdr y))))))
 
 (defun group (source n)
   "Group source into each with n numbers of elements unless the last is not enough"
@@ -297,12 +297,13 @@
 
 
 ;; mvdo example
-;; (mvdo ((x 1 (1+ x))
-;;        ((y z) (values 0 0) (values z x)))
-;;       ((> x 5) (list x y z))
-;;       (princ (list x y z)))
+(mvdo ((x 1 (1+ x))
+       ((y z) (values 0 0) (values z x)))
+    ((> x 5) (list x y z))
+  (princ (list x y z)))
 
 ;; macro expand to:
+
 
 
 ;; 不同于mvdo*, mvdo需要一次性将参数初始form提取出来，采用mvpsetq初始赋值， 这样防止参数赋值前后顺序影响，
@@ -312,6 +313,39 @@
 
 ;; TODO
 ;; (defmacro mvdo (parm-cl test-cl &body body)
-;;   (let ((lable (gensym))
-;;         )))
+;;   (let* ((label (gensym))
+;;          (temp-cl (mapcar #'(lambda (p)
+;;                               (list (if (listp (first p))
+;;                                         (mapcar #'(lambda (x) (list x (gensym))) (first p))
+;;                                         (list (first p) (gensym)))
+;;                                     (second p)))
+;;                           parm-cl))
+;;          (prog-cl (mapcar #'first temp-cl))
+;;          (mvpsetq-cl (mapcar #'(lambda (p)     (list (if (listp (second (first p))))
+;;                                                 (second p)))
+;;                              temp-cl))
+;;          (let-cl (flatten-1 (mapcar #'(lambda (p) (first p))
+;;                                     prog-cl))))
 
+;;     `(let (,@let-cl)
+;;        ,temp-cl
+;;        (mvpsetq ,mvpsetq-cl)
+;;        (prog (,@prog-cl) ;; TODO init bind
+;;           ,label
+;;           ,@body
+;;           (if ,(car test-cl)
+;;               (return (progn ,@(cdr test-cl))))
+;;           ;; todo ebind
+;;           (go ,label)))))
+
+;; macro expand to
+;; (let (#:g1 #:g2 #:g3)
+;;   (mvpsetq #:g1 1 (#:g2 #:g3) (values 0 0))
+;;   (prog ((x #:g1) (y #:g2) (z #:g3))
+;;      #:label
+;;    ..body
+;;    test
+
+;;      (mvpsetq #:g1 (1+ x) (#:g2 #:g3) (values z x))
+;;      (go #:label)
+;;      ))
