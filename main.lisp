@@ -241,7 +241,7 @@
 ;; (1 A 2 B 3 C)
 (defun shuffle-1 (l1 l2)  ;; name it shuffle-1 to escape shuffle fun in below, although they do same.
   (let (result)
-    (mapcar #'(lambda (x y) (push x result) (push y result)) 
+    (mapcar #'(lambda (x y) (push x result) (push y result))
             l1
             l2)
     (nreverse result)))
@@ -261,7 +261,7 @@
     (labels ((rec (ps ss)
                (if (null ps)
                    `(setq ,@(mapcan #'(lambda (p s) (shuffle-it (ensure-list (car p)) s))
-                                    pairs syms))  
+                                    pairs syms))
                    (let ((body (rec (cdr ps) (cdr ss)))) ;; recursive call self, because we have Got the syms list , not like my-own solution, generate in each recursion.
                      (let ((var/s (caar ps))
                            (expr (cadar ps)))
@@ -297,12 +297,22 @@
 
 
 ;; mvdo example
-(mvdo ((x 1 (1+ x))
-       ((y z) (values 0 0) (values z x)))
-    ((> x 5) (list x y z))
-  (princ (list x y z)))
+;; (mvdo ((x 1 (1+ x))
+;;        ((y z) (values 0 0) (values z x)))
+;;     ((> x 5) (list x y z))
+;;   (princ (list x y z)))
 
 ;; macro expand to:
+
+;; (LET (#:G642 #:G643 #:G644)
+;;   (MVPSETQ #:G642 1 (#:G643 #:G644) (VALUES 0 0))
+;;   (PROG ((X #:G642) (Y #:G643) (Z #:G644))
+;;      #:G641
+;;      (PRINC (LIST X Y Z))
+;;      (IF (> X 5)
+;;          (RETURN (PROGN (LIST X Y Z))))
+;;      (MVPSETQ X (1+ X) (Y Z) (VALUES Z X))
+;;      (GO #:G641)))
 
 
 
@@ -311,41 +321,55 @@
 ;; 同样的，原来的rebind form采用多个 setq/multiple-value-bind 前后依次更新值，现在也需要mvpsetq 来并行更新值了
 ;; 所以整体就没有递归调用生成了，因为不需要嵌套了
 
-;; TODO
-;; (defmacro mvdo (parm-cl test-cl &body body)
-;;   (let* ((label (gensym))
-;;          (temp-cl (mapcar #'(lambda (p)
-;;                               (list (if (listp (first p))
-;;                                         (mapcar #'(lambda (x) (list x (gensym))) (first p))
-;;                                         (list (first p) (gensym)))
-;;                                     (second p)))
-;;                           parm-cl))
-;;          (prog-cl (mapcar #'first temp-cl))
-;;          (mvpsetq-cl (mapcar #'(lambda (p)     (list (if (listp (second (first p))))
-;;                                                 (second p)))
-;;                              temp-cl))
-;;          (let-cl (flatten-1 (mapcar #'(lambda (p) (first p))
-;;                                     prog-cl))))
 
-;;     `(let (,@let-cl)
-;;        ,temp-cl
-;;        (mvpsetq ,mvpsetq-cl)
-;;        (prog (,@prog-cl) ;; TODO init bind
-;;           ,label
-;;           ,@body
-;;           (if ,(car test-cl)
-;;               (return (progn ,@(cdr test-cl))))
-;;           ;; todo ebind
-;;           (go ,label)))))
+;; --- My solution ---
+(defmacro mvdo (parm-cl test-cl &body body)
+  (let* ((label (gensym))
+         (let-cl '()) ;; form like:  #:G593 #:G594 #:G595
+         (mvsetq-cl '()) ;; form like:  #:G593 1 (#:G594 #:G595) (values 0 0)
+         (prog-cl '()) ;; form like:  (X #:G593) (Y #:G594) (Z #:G595)
+         )
+    ;; Use a loop to generate three main clauses for macro
+    ;; when generate gensym, the push it to different clauses according to different require
+    ;; use loop with it's side effect
+    (loop :for each :in parm-cl
+          :do (if (listp (first each))
+                  ;; ((y z) (values 0 0) -> (values z x)) (y z) -> ((y #:g1) (z #:g2))
+                  (let ((var-g-pair-list (mapcar #'(lambda (x) (list x (gensym))) (first each))))
+                    ;; construct let-cl
+                    (mapcar #'(lambda (p) (push (second p) let-cl)) var-g-pair-list)
+                    ;; construct mvsetq-cl
+                    (push (mapcar #'second  var-g-pair-list) mvsetq-cl)
+                    (push (second each) mvsetq-cl)
+                    ;; construct prog-cl
+                    (mapcar #'(lambda (p) (push p prog-cl)) var-g-pair-list)
+                    )
+                  (let ((g (gensym)))
+                    ;; construct let-cl
+                    (push g let-cl)
+                    ;; construct mvsetq-cl
+                    (push g mvsetq-cl)
+                    (push (second each) mvsetq-cl)
+                    ;; construct prog-cl
+                    (push (list (first each) g) prog-cl)))
+          :finally (progn
+                     (setf let-cl (nreverse let-cl))
+                     (setf mvsetq-cl (nreverse mvsetq-cl))
+                     (setf prog-cl (nreverse prog-cl))))
 
-;; macro expand to
-;; (let (#:g1 #:g2 #:g3)
-;;   (mvpsetq #:g1 1 (#:g2 #:g3) (values 0 0))
-;;   (prog ((x #:g1) (y #:g2) (z #:g3))
-;;      #:label
-;;    ..body
-;;    test
+    ;; just use the *-cl generated above
+    `(let (,@let-cl)
+       (mvpsetq ,@mvsetq-cl)
+       (prog (,@prog-cl) ;; TODO init bind
+          ,label
+          ,@body
+          (if ,(car test-cl)
+              (return (progn ,@(cdr test-cl))))
+          ;; construct rebind form here, because it has no relation to gensyms.
+          (mvpsetq ,@(flatten-1 (mapcar #'(lambda (p) (list (first p) (third p))) parm-cl)))
+          (go ,label)))))
 
-;;      (mvpsetq #:g1 (1+ x) (#:g2 #:g3) (values z x))
-;;      (go #:label)
-;;      ))
+;; --- My solution end ---
+
+
+
