@@ -18,6 +18,7 @@
            #:do-tuples/c
            #:mvdo*
            #:mvpsetq
+           #:mvdo
            ))
 
 (in-package :onlisp)
@@ -323,7 +324,8 @@
 
 
 ;; --- My solution ---
-(defmacro mvdo (parm-cl test-cl &body body)
+;; Use mvdo-1 name here to escape conflict with latter book solution
+(defmacro mvdo-1 (parm-cl test-cl &body body)
   (let* ((label (gensym))
          (let-cl '()) ;; form like:  #:G593 #:G594 #:G595
          (mvsetq-cl '()) ;; form like:  #:G593 1 (#:G594 #:G595) (values 0 0)
@@ -362,14 +364,67 @@
        (mvpsetq ,@mvsetq-cl)
        (prog (,@prog-cl) ;; TODO init bind
           ,label
-          ,@body
           (if ,(car test-cl)
               (return (progn ,@(cdr test-cl))))
+          ,@body
           ;; construct rebind form here, because it has no relation to gensyms.
-          (mvpsetq ,@(flatten-1 (mapcar #'(lambda (p) (list (first p) (third p))) parm-cl)))
+          (mvpsetq ,@(flatten-1
+                      (mapcar #'(lambda (p)
+                                  (when (third p)
+                                    (list (first p)
+                                          (third p))))
+                              parm-cl)))
           (go ,label)))))
 
 ;; --- My solution end ---
 
 
+
+;; --- Book solution ---
+(defmacro mvdo (binds (test &rest result) &body body)
+  (let ((label (gensym))
+        (temps (mapcar #'(lambda (b)
+                           (if (listp (car b))
+                               (mapcar #'(lambda (x)
+                                           (gensym))
+                                       (car b))
+                               (gensym)))
+                       binds))) ;; temps like (#:G617 (#:G618 #:G619)), transfer binds to gensym symbols
+    `(let ,(mappend #'ensure-list temps)
+       (mvpsetq ,@(mapcan #'(lambda (b var)
+                              (list var (cadr b)))
+                          binds
+                          temps))
+       (prog ,(mapcar #'(lambda (b var) (list b var)) ;; mapcar 将下面两个列表一一配对
+               (mappend #'ensure-list (mapcar 'car binds))  ;; 将所有的初始变量展平
+               (mappend #'ensure-list temps)) ;; 将所有的temps展平
+          ,label
+          (if ,test
+              (return (progn ,@result)))
+          ,@body
+          (mvpsetq ,@(mapcan #'(lambda (b)
+                                 (if (third b)  ;; 判断是否有更新的表达式,来决定是否生成
+                                     (list (car b)
+                                           (third b))))
+                             binds))
+          (go ,label)))))
+
+
+;; 宏心得:
+;; 1.上面两处的mapcan的使用相当于 (flatten-1 (mapcar ... )). 更加简洁
+;; mapcar 是将结果用list连接，而mapcan是用nonc连接结果
+
+;; 2. (mappend #'ensure-list temps) 目的是想把temps“压扁”一层,
+;; 相当于我这里定义的flatten-1, 将temps里的元素“上提”一层
+;; CL-USER> (flatten-1 '((a b c) d (e (f g) h) ((i)) i))
+;; (A B C D E (F G) H (I) I)
+;; CL-USER> (mappend #'ensure-list '((a b c) d (e (f g) h) ((i)) i))
+;; (A B C D E (F G) H (I) I)
+
+;; 3. 上面的解决方案与我的方案相比，更加简洁。充分利用了mapcar的函数可以接受多个参数的特性，
+;; 事先将gensyms生成好，但保持和binds同构，然后用mapcar/mapcan 接受同构的gensyms和binds
+;; 而我的解决方案是产生gensyms的同时构造不同用到的地方的语句结构(上面的例子有let-cl, mvpsetq-cl, prog-cl)
+
+
+;; --- Book solution end ---
 
