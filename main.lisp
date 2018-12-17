@@ -19,6 +19,15 @@
            #:mvdo*
            #:mvpsetq
            #:mvdo
+
+           ;; setf related
+           #:toggle
+           #:allf
+           #:nilf
+           #:tf
+           #:concf
+           #:conc1f
+           #:concnew
            ))
 
 (in-package :onlisp)
@@ -427,4 +436,63 @@
 
 
 ;; --- Book solution end ---
+
+
+;;; Chapter 12.1
+(defmacro toggle (&rest args)
+  `(progn
+     ,@(mapcar #'(lambda (x)
+                   `(toggle-2 ,x))
+               args)))
+
+(define-modify-macro toggle-2 () not)
+
+
+;;; Chapter 12.2
+
+;; Setf all args to val
+(defmacro allf (val &rest args)
+  (with-gensyms (v)
+    `(let ((,v ,val))
+       (setf ,@(mapcan #'(lambda (a)
+                           `(,a ,v))
+                       args)))))
+
+;; Setf all args to nil
+(defmacro nilf (&rest args)
+  `(allf nil ,@args))
+
+;; Setf all args to t
+(defmacro tf (&rest args)
+  `(allf t ,@args))
+
+;; Like (setf x (nconc x y ...))
+(define-modify-macro concf (obj) nconc)
+
+;; Like `push` to last end of list
+(defun conc1f/function (place obj)
+  (nconc place (list obj)))
+(define-modify-macro conc1f (obj) conc1f/function)
+
+;; Like `pushnew` to last end of list
+(defun concnew/function (place obj &rest args)
+  (if (apply #'member obj place args)
+      place
+      (nconc place (list obj))))
+(define-modify-macro concnew (obj &rest args) concnew/function)
+
+
+;;; temp
+
+(defun _f1/function (place op factor)
+  (op place factor))
+
+(define-modify-macro _f1 (op factor) _f1/function)
+
+(defmacro _f (op place &rest args)
+  (multiple-value-bind (vars forms var set access)
+      (get-setf-expansion place)
+    `(let (,@(mapcar #'list vars forms)
+           (,(car var) (,op ,access ,@args)))
+       ,set)))
 
