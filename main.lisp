@@ -481,18 +481,88 @@
       (nconc place (list obj))))
 (define-modify-macro concnew (obj &rest args) concnew/function)
 
-
-;;; temp
+;;; chapter 12.4
 
-(defun _f1/function (place op factor)
-  (op place factor))
-
-(define-modify-macro _f1 (op factor) _f1/function)
-
+;; Macro `_f`
 (defmacro _f (op place &rest args)
   (multiple-value-bind (vars forms var set access)
       (get-setf-expansion place)
-    `(let (,@(mapcar #'list vars forms)
-           (,(car var) (,op ,access ,@args)))
+    `(let* (,@(mapcar #'list vars forms)
+            (,(car var) (,op ,access ,@args)))
        ,set)))
+
+;; Macro `conc1f` created with `_f`
+;; name with `'` to avoid name conflcit
+(defmacro conc1f' (lst obj)
+  `(_f nconc ,lst (list ,obj)))
+
+
+;; Macro `pull`
+;; Use case
+;; (let ((x '(1 2 (a b) 3)))
+;;   (print (pull '(a b) (cdr x) :test #'equal))
+;;   (print x)
+;;   nil)
+;; =>
+;; (2 3) 
+;; (1 2 3) 
+;; NIL
+(defmacro pull (obj place &rest args)
+  (multiple-value-bind (vars forms var set access)
+      (get-setf-expansion place)
+    (let ((g (gensym)))
+      `(let* ((,g ,obj)
+              ,@(mapcar #'list vars forms)
+              (,(car var) (delete ,g ,access ,@args)))
+         ,set))))
+
+;; Macro expansion example1
+;; (let ((x '(1 2 (a b) 3)))
+;;   (pull '(a b) (cdr x) :test #'equal))
+
+;; expand to
+
+;; (LET ((X '(1 2 (A B) 3)))
+;;   (LET* ((#:G611 '(A B))
+;;          (#:X610 X)
+;;          (#:NEW1 (DELETE #:G611 (CDR #:X610) :TEST #'EQUAL)))
+;;     (SB-KERNEL:%RPLACD #:X610 #:NEW1)))
+
+;; ;; Macro expansion example2
+;; (let ((x '(1 2 (a b) 3)))
+;;   (onlisp::pull 3 (cddr x) :test #'equal))
+
+;; expand to
+
+;; (LET ((X '(1 2 (A B) 3)))
+;;   (LET* ((#:G617 3)
+;;          (#:LIST (CDR X))
+;;          (#:NEW (DELETE #:G617 (CDR #:LIST) :TEST #'EQUAL)))
+;;     (SB-KERNEL:%RPLACD #:LIST #:NEW)))
+
+
+
+;; Macro `pull-if` use case
+;; CL-USER> (let ((l '(1 2  3 4 5)))
+;;            (pull-if #'oddp l)
+;;            l)
+;; =>
+;; (2 4)
+
+;; expand to
+;; (LET ((L '(1 2 3 4 5)))
+;;   (LET* ((#:G619 #'ODDP) (#:NEW1 (DELETE-IF #:G619 L)))
+;;     (SETQ L #:NEW1))
+;;   L)
+
+
+(defmacro pull-if (test place &rest args)
+  (multiple-value-bind (vars forms var set access)
+      (get-setf-expansion place)
+    (let ((g (gensym)))
+      `(let* ((,g ,test)
+              ,@(mapcar #'list vars forms)
+              (,(car var) (delete-if ,g ,access ,@args)))  ;; the different with pull is here
+         ,set))))
+
 
