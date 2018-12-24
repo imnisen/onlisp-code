@@ -492,11 +492,11 @@
        ,set)))
 
 ;; Macro `conc1f` created with `_f`
-;; name with `'` to avoid name conflcit
+;; name with `'` to avoid name conflict
 (defmacro conc1f' (lst obj)
   `(_f nconc ,lst (list ,obj)))
 
-
+
 ;; Macro `pull`
 ;; Use case
 ;; (let ((x '(1 2 (a b) 3)))
@@ -540,7 +540,7 @@
 ;;          (#:NEW (DELETE #:G617 (CDR #:LIST) :TEST #'EQUAL)))
 ;;     (SB-KERNEL:%RPLACD #:LIST #:NEW)))
 
-
+
 
 ;; Macro `pull-if` use case
 ;; CL-USER> (let ((l '(1 2  3 4 5)))
@@ -566,3 +566,40 @@
          ,set))))
 
 
+
+;; Macro popn
+
+;; Use case
+;; (let ((l '(a b c d e f g)))
+;;   (print (onlisp::popn 2 (cddr l)))
+;;   (print l)
+;;   nil)
+
+;; =>
+
+;; (C D) 
+;; (A B E F G) 
+;; NIL
+
+
+(defmacro popn (n place)
+  (multiple-value-bind (vars forms var set access)
+      (get-setf-expansion place)
+    (with-gensyms (gn glst)
+      `(let* ((,gn ,n)
+              ,@(mapcar #'list vars forms)
+              (,glst ,access)
+              (,(car var) (nthcdr ,gn ,glst)))
+         (prog1 (subseq ,glst 0 ,gn)
+           ,set)))))
+
+;; Macro expansion
+
+;; (LET ((L '(A B C D E F G)))
+;;   (PRINT (LET* ((#:GN595 2)
+;;                 (#:LIST (CDR L))
+;;                 (#:GLST596 (CDR #:LIST))
+;;                 (#:NEW (NTHCDR #:GN595 #:GLST596)))
+;;            (PROG1 (SUBSEQ #:GLST596 0 #:GN595) (SB-KERNEL:%RPLACD #:LIST #:NEW))))
+;;   (PRINT L)
+;;   NIL)
