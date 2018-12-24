@@ -447,7 +447,7 @@
 
 (define-modify-macro toggle-2 () not)
 
-
+
 ;;; Chapter 12.2
 
 ;; Setf all args to val
@@ -481,9 +481,12 @@
       (nconc place (list obj))))
 (define-modify-macro concnew (obj &rest args) concnew/function)
 
+
+
 ;;; chapter 12.4
 
-;; Macro `_f`
+;;; --- Macro `_f` ---
+
 (defmacro _f (op place &rest args)
   (multiple-value-bind (vars forms var set access)
       (get-setf-expansion place)
@@ -496,8 +499,9 @@
 (defmacro conc1f' (lst obj)
   `(_f nconc ,lst (list ,obj)))
 
-
-;; Macro `pull`
+
+;;; --- Macro `pull` ---
+
 ;; Use case
 ;; (let ((x '(1 2 (a b) 3)))
 ;;   (print (pull '(a b) (cdr x) :test #'equal))
@@ -540,9 +544,10 @@
 ;;          (#:NEW (DELETE #:G617 (CDR #:LIST) :TEST #'EQUAL)))
 ;;     (SB-KERNEL:%RPLACD #:LIST #:NEW)))
 
-
 
-;; Macro `pull-if` use case
+;;; --- Macro `pull-if`---
+
+;; use case
 ;; CL-USER> (let ((l '(1 2  3 4 5)))
 ;;            (pull-if #'oddp l)
 ;;            l)
@@ -562,12 +567,11 @@
     (let ((g (gensym)))
       `(let* ((,g ,test)
               ,@(mapcar #'list vars forms)
-              (,(car var) (delete-if ,g ,access ,@args)))  ;; the different with pull is here
+              (,(car var) (delete-if ,g ,access ,@args))) ;; the different with pull is here
          ,set))))
 
 
-
-;; Macro popn
+;;; --- Macro popn ---
 
 ;; Use case
 ;; (let ((l '(a b c d e f g)))
@@ -603,3 +607,46 @@
 ;;            (PROG1 (SUBSEQ #:GLST596 0 #:GN595) (SB-KERNEL:%RPLACD #:LIST #:NEW))))
 ;;   (PRINT L)
 ;;   NIL)
+
+
+;;; --- Macro sortf ---
+
+(defmacro sortf (op &rest places)
+  (let* ((meths (mapcar #'(lambda (p)
+                            (multiple-value-list
+                             (get-setf-expansion p)))
+                        places))
+         (temps (apply #'append (mapcar #'third meths))))
+    `(let* ,(mapcar #'list
+                    (mapcan #'(lambda (m)
+                                (append (first m)
+                                        (third m)))
+                            meths)
+                    (mapcan #'(lambda (m)
+                                (append (second m)
+                                        (list (fifth m))))
+                            meths))
+       ,@(mapcon #'(lambda (rest)
+                     (mapcar
+                      #'(lambda (arg)
+                          `(unless (,op ,(car rest) ,arg)
+                             (rotatef ,(car rest) ,arg)))
+                      (cdr rest)))
+                 temps)
+       ,@(mapcar #'fourth meths))))
+
+;; (let ((x 1)
+;;       (y 2)
+;;       (z 3))
+;;   (sortf > x y z)
+;;   (list x y z))
+
+;; (LET ((X 1) (Y 2) (Z 3))
+;;   (LET* ((#:NEW1 X) (#:NEW1 Y) (#:NEW1 Z))
+;;     (UNLESS (> #:NEW1 #:NEW1) (ROTATEF #:NEW1 #:NEW1))
+;;     (UNLESS (> #:NEW1 #:NEW1) (ROTATEF #:NEW1 #:NEW1))
+;;     (UNLESS (> #:NEW1 #:NEW1) (ROTATEF #:NEW1 #:NEW1))
+;;     (SETQ X #:NEW1)
+;;     (SETQ Y #:NEW1)
+;;     (SETQ Z #:NEW1))
+;;   (LIST X Y Z))
