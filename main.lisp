@@ -494,6 +494,7 @@
             (,(car var) (,op ,access ,@args)))
        ,set)))
 
+
 ;; Macro `conc1f` created with `_f`
 ;; name with `'` to avoid name conflict
 (defmacro conc1f' (lst obj)
@@ -626,12 +627,15 @@
                                 (append (second m)
                                         (list (fifth m))))
                             meths))
-       ,@(mapcon #'(lambda (rest)
+       ,@(mapcon #'(lambda (rest) ;; 1. use mapcon so `rest` arg will be (#:g1 #:g2 #:g3) (#:g2 #:g3) (#:g3) each time
                      (mapcar
+                      ;; 3. so when the inner lambda get (#:g2 #:g3) passed, it will compare to `(car rest)` which is #:g1;
+                      ;; when the inner lambda get (#:g3) passed, it will compare to `(car rest)` which is #:g2.
+                      ;; So it creates three unless expression
                       #'(lambda (arg)
                           `(unless (,op ,(car rest) ,arg)
                              (rotatef ,(car rest) ,arg)))
-                      (cdr rest)))
+                      (cdr rest)))  ;; 2. so (cdr list) passed to the `mapcar lambda` will be (#:g2 #:g3) (#:g3) ()
                  temps)
        ,@(mapcar #'fourth meths))))
 
@@ -640,6 +644,10 @@
 ;;       (z 3))
 ;;   (sortf > x y z)
 ;;   (list x y z))
+
+;; => (3 2 1)
+
+;; Macro expand result
 
 ;; (LET ((X 1) (Y 2) (Z 3))
 ;;   (LET* ((#:NEW1 X) (#:NEW1 Y) (#:NEW1 Z))
