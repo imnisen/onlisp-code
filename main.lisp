@@ -658,3 +658,136 @@
 ;;     (SETQ Y #:NEW1)
 ;;     (SETQ Z #:NEW1))
 ;;   (LIST X Y Z))
+
+
+;;; Chapter 13 编译期计算
+
+;; 对比 函数版本和宏版本
+
+;; --- Function & Macro avg ---
+(defun avg (&rest args)
+  (/ (apply #'+ args) (length args)))
+
+;;对 (length args) 的计算由运行期移到了编译期
+(defmacro avg (&rest args)
+  `(/ (+ ,@args) ,(length args)))
+
+;; Macro expansion
+
+;; CL-USER> (avg 1 2 3 4 5)
+
+;; (/ (+ 1 2 3 4 5) 5)
+
+
+
+;; --- Function & Macro most-of ---
+(defun most-of (&rest args)
+  (let ((all 0)
+        (hits 0))
+    (dolist (a args)
+      (incf all)
+      (if a (incf hits)))
+    (> hits (/ all 2))))
+
+
+(defmacro most-of (&rest args)
+  (let ((need (floor (/ (length args) 2)))
+        (hits (gensym)))
+    `(let ((,hits 0))
+       (or ,@(mapcar #'(lambda (a)
+                         `(and ,a (> (incf ,hits) ,need)))
+                     args)))))
+
+;; Macroexpansion 
+;; CL-USER> (most-of t t nil nil t)
+
+;; (LET ((#:G584 0))
+;;   (OR (AND T (> (INCF #:G584) 2))
+;;       (AND T (> (INCF #:G584) 2))
+;;       (AND NIL (> (INCF #:G584) 2))
+;;       (AND NIL (> (INCF #:G584) 2))
+;;       (AND T (> (INCF #:G584) 2))))
+
+;; 利用了or和and的短路性质, ~most-of~ 宏只会求值需要的数量的参数.
+;; 最理想情况下，只对刚过半的参数求值。
+
+
+;; --- Function & Macro nthmost ---
+(defun nthmost (n lst)
+  (nth n (sort (copy-list lst) #'>)))
+
+(defmacro nthmost-1 (n lst)
+  (if (and (integerp n) (< n 20))
+      (with-gensyms (glst gi)
+        (let ((syms (map0-n #'(lambda (x)
+                                (declare (ignore x))
+                                (gensym))
+                            n)))
+          `(let ((,glst ,lst))
+             (unless (< (length ,glst) ,(1+ n))
+               ,@(gen-start glst syms)
+               (dolist (,gi ,glst)
+                 ,(nthmost-gen gi syms t))
+               ,(car (last syms))))))
+      `(nth ,n (sort (copy-list ,lst) #'>))))
+
+(defun gen-start (glst syms)
+  (reverse
+   (maplist #'(lambda (syms)
+                (let ((var (gensym)))
+                  `(let ((,var (pop ,glst)))
+                     ,(nthmost-gen var (reverse syms)))))
+            (reverse syms))))
+
+(defun nthmost-gen (var vars &optional long?)
+  (if (null vars)
+      nil
+      (let ((else (nthmost-gen var (cdr vars) long?)))
+        (if (and (not long?) (null else))
+            `(setq ,(car vars) ,var)
+            `(if (> ,var ,(car vars))
+                 (setq ,@(mapcan #'list
+                                 (reverse vars)
+                                 (cdr (reverse vars)))
+                       ,(car vars) ,var)
+                 ,else)))))
+
+
+;; CL-USER> (onlisp::nthmost-1 2 '(2 6 1 4 3 4))
+
+;; (LET ((#:GLST625 '(2 6 1 4 3 4)))
+;;   (UNLESS (< (LENGTH #:GLST625) 3)
+;;     (LET ((#:G632 (POP #:GLST625)))
+;;       (SETQ #:G627 #:G632))
+;;     (LET ((#:G631 (POP #:GLST625)))
+;;       (IF (> #:G631 #:G627)
+;;           (SETQ #:G628 #:G627
+;;                 #:G627 #:G631)
+;;           (SETQ #:G628 #:G631)))
+;;     (LET ((#:G630 (POP #:GLST625)))
+;;       (IF (> #:G630 #:G627)
+;;           (SETQ #:G629 #:G628
+;;                 #:G628 #:G627
+;;                 #:G627 #:G630)
+;;           (IF (> #:G630 #:G628)
+;;               (SETQ #:G629 #:G628
+;;                     #:G628 #:G630)
+;;               (SETQ #:G629 #:G630))))
+;;     (DOLIST (#:GI626 #:GLST625)
+;;       (IF (> #:GI626 #:G627)
+;;           (SETQ #:G629 #:G628
+;;                 #:G628 #:G627
+;;                 #:G627 #:GI626)
+;;           (IF (> #:GI626 #:G628)
+;;               (SETQ #:G629 #:G628
+;;                     #:G628 #:GI626)
+;;               (IF (> #:GI626 #:G629)
+;;                   (SETQ #:G629 #:GI626)
+;;                   NIL))))
+;;     #:G629))
+
+
+
+
+
+
