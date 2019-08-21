@@ -28,6 +28,8 @@
            #:concf
            #:conc1f
            #:concnew
+
+           #:acond
            ))
 
 (in-package :onlisp)
@@ -790,4 +792,169 @@
 
 
 
+;; chapter14
 
+;; (acond ((testf-form1) (execute-from1))
+;;       ((testf-form2) (execute-from2))
+;;       ((testf-form3) (execute-from3)))
+
+(defmacro acond (&rest clauses)
+  (if (null clauses)
+      nil
+      (let ((cl1 (car clauses))
+            (sym (gensym)))
+        `(let ((,sym ,(car cl1)))
+           (if ,sym
+               (let ((it ,sym)) ,@(cdr cl1))
+               (acond ,@(cdr clauses)))))))
+
+;; (acond (nil (format t "result1 is ~a~%" it))
+;;        ((- 3 2) (format t "result2 is ~a~%" it))
+;;        (t (format t "default clause")))
+
+;; 初步展开:
+;; (LET ((#:G600 NIL))
+;;   (IF #:G600
+;;       (LET ((IT #:G600))
+;;         (FORMAT T "result1 is ~a~%" IT))
+;;       (ACOND ((- 3 2) (FORMAT T "result2 is ~a~%" IT))
+;;              (T (FORMAT T "default clause")))))
+
+;; 再次展开:
+;; (LET ((#:G601 NIL))
+;;   (IF #:G601
+;;       (LET ((IT #:G601))
+;;         (FORMAT T "result1 is ~a~%" IT))
+;;       (LET ((#:G602 (- 3 2)))
+;;         (IF #:G602
+;;             (LET ((IT #:G602))
+;;               (FORMAT T "result2 is ~a~%" IT))
+;;             (ACOND (T (FORMAT T "default clause")))))))
+
+;; it范围比较大的(可能不合适的)
+;; (defmacro acond (&rest clauses)
+;;   (if (null clauses)
+;;       nil
+;;       (let ((cl1 (car clauses)))
+;;         `(let ((it ,(car cl1)))
+;;            (if it
+;;                (progn ,@(cdr cl1))
+;;                (acond ,@(cdr clauses)))))))
+
+;; (acond (nil (format t "result1 is ~a~%" it))
+;;        ((- 3 2) (format t "result2 is ~a~%" it))
+;;        (t (format t "default clause")))
+;; ;; 展开成:
+;; (LET ((IT NIL))
+;;   (IF IT
+;;       (PROGN (FORMAT T "result1 is ~a~%" IT))
+;;       (LET ((IT (- 3 2)))
+;;         (IF IT
+;;             (PROGN (FORMAT T "result2 is ~a~%" IT))
+;;             (ACOND (T (FORMAT T "default clause")))))))
+
+
+
+
+;; chapter 14
+(defmacro alambda (params &body body)
+  `(labels ((self ,params ,@body))
+     #'self))
+
+(alambda (x) (if (= x 0) 1 (* x (self (1- x)))))
+
+
+(defmacro ablock (tag &rest args)
+  `(block ,tag
+     ,(funcall (alambda (args)
+                        (case (length args)
+                          (0 nil)
+                          (1 (car args))
+                          (t `(let ((it ,(car args)))
+                                ,(self (cdr args))))))
+               args)))
+
+
+;; (ablock outer
+;;         (ablock inner
+;;                 (return-from inner 1))
+;;         (format t "Inner return is ~a~%" it)
+;;         (format t "Last step return is ~a~%" it)
+;;         "outer ends.")
+
+;; (BLOCK OUTER
+;;   (LET ((IT (BLOCK INNER (RETURN-FROM INNER 1))))
+;;     (LET ((IT (FORMAT T "Inner return is ~a~%" IT)))
+;;       (LET ((IT (FORMAT T "Last step return is ~a~%" IT)))
+;;         "outer ends."))))
+
+
+;;; chapter 15 返回函数的宏
+
+;; compose from chapter5.4
+(defun compose (&rest fns)
+  (if fns
+      (let ((fn1 (car (last fns)))
+            (fns (butlast fns)))
+        #'(lambda (&rest args)
+            (reduce #'funcall fns
+                    :from-end t
+                    :initial-value (apply fn1 args))))
+      #'identity))
+
+;; compose example
+;; CL-USER> (funcall (compose #'1+ #'find-if) #'oddp '(2 3 4))
+;; 4
+
+
+;;; 通用的用于构造函数的宏fn
+;;
+;; fn是一个函数构造器，用宏来将作为参数的函数组装起来，具体怎么组装，取决于其中的某些参数
+;; fn的参数是形如(operator arguments)的表达式
+;; operator 可以是一个函数或者宏的名字，也可以是被区别对待的compose函数
+;; arguments 可以是接受一个参数的函数或者宏的名字，或者是可作为fn参数的表达式
+;;
+;; fn宏生成的结果是一个函数，该函数的作用是将接受的参数作用于每个arguments函数上，最后将各个结果作为参数使用operator组装
+;; 如果有些arguments函数本身就是一个形如(operator arguments)的格式，那么参数作用于其上时，也按照相同的规则。
+;; 比如：
+;; (fn (and intergerp oddp)) => #'(lambda (x) (and (intergerp x) (oddp x)))
+;; 再比如：
+;; (fn (list (1+ truncate))) => #'(lambda (#:g1)
+;;                                  (list ((lambda (#:g2) (1+ (truncate #:g2))) #:g1)))
+;; 特例，如果参数operator是compose, 那么生成的函数就是复合所有arguments函数的函数。
+;; 和直接调用compose类似.
+;; 比如
+;; (fn (compose list 1+ truncate)) => #'(lambda (#:g1) (list (1+ (truncate #:g1))))
+;;
+;; 虽然这里将compose作为一种特殊情况处理，但并没有增加fn的功能，只是为了增加调用的可读性。如果把嵌套的参数传给fn就能形成函数的复合。
+;; 其实上面的例子也就相当于
+;; (fn (list (1+ truncate))) => #'(lambda (#:g1)
+;;                                  (list ((lambda (#:g2) (1+ (truncate #:g2))) #:g1)))
+;; 等价于
+;; (fn (compose list 1+ truncate)) => #'(lambda (#:g1) (list (1+ (truncate #:g1))))
+(defmacro fn (expr)
+  `#',(rbuild expr))  ;; 通过调用rbuild函数来构造来生成函数expression
+
+(defun rbuild (expr)
+  (if (or (atom expr) (eq (car expr) 'lambda)) ;; 判断传入的表达式是个atom或者是个lambda表达式，则返回该表达式自身
+      expr
+      (if (eq (car expr) 'compose)  ;; 根据operator是不是特殊情况compose，调用不同的函数来构造表达式
+          (build-compose (cdr expr))
+          (build-call (car expr) (cdr expr)))))
+
+(defun build-compose (fns)
+  (let ((g (gensym)))
+    `(lambda (,g)  ;; 外层的lambda是因为我们需要构造一个函数返回
+       ,(labels ((rec (fns) ;; 这里定一个临时的递归函数rec，该函数接受一些函数列表，嵌套调用，最左边的函数包装在最外边调用，也就是最后调用，最后生成函数递归调用的表达式
+                   (if fns  ;; 递归的临界值检查
+                       `(,(rbuild (car fns))
+                         ,(rec (cdr fns))) ;; 生成函数递归调用的表达式， (rbuild (car fns)) 是防止operator又是一个(operator arguments)的形式 
+                       g))) ;; 临界值，复合函数最后的参数是最外面函数的参数
+          (rec fns)))))
+
+(defun build-call (op fns)
+  (let ((g (gensym)))
+    `(lambda (,g) ;; 外层的lambda是因为我们需要构造一个函数返回
+       (,op ,@(mapcar #'(lambda (f)
+                          `(,(rbuild f) ,g))  ;; 对每个fn都将参数g传入，最后的结果是list,使用,@展开，作为参数传给op。其中，防止fns里有嵌套的(operator arguments)形式，递归调用(rbuild f)
+                      fns)))))
