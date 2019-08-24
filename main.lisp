@@ -30,6 +30,10 @@
            #:concnew
 
            #:acond
+
+           #:compose
+           #:fn
+           
            ))
 
 (in-package :onlisp)
@@ -958,3 +962,413 @@
        (,op ,@(mapcar #'(lambda (f)
                           `(,(rbuild f) ,g))  ;; 对每个fn都将参数g传入，最后的结果是list,使用,@展开，作为参数传给op。其中，防止fns里有嵌套的(operator arguments)形式，递归调用(rbuild f)
                       fns)))))
+
+
+;;; 先回顾 chapter 5.5 在cdr上递归
+;; 我们来看下面两个在list上以cdr递归的函数:
+;; 第一个函数是求一个列表的长度 (实际上和内置length功能相同)
+(defun our-length (lst)
+  (if (null lst)
+      0                             ;; 这里是最基础的值
+      (1+ (our-length (cdr lst)))))  ;; 在cdr上递归，每次递归结果+1
+
+;; 第二个函数是判断一个列表里的元素是否都是基数 (实际上和内置的every+oddp功能相同)
+(defun our-every-oddp (lst)
+  (if (null lst)
+      t                                   ;; base case
+      (and (oddp (car lst))               ;; 取出第一个元素判断是否是基数，
+           (our-every-oddp (cdr lst)))))  ;; 然后在cdr上递归，将car的结果和cdr的结果用and连接
+
+;; 甚至，让我们看看every函数
+(defun our-every (fn lst)
+  (if (null lst)
+      t                                ;; base case
+      (and (funcall fn (car lst))      ;; 取出第一个元素判断fn调用结果
+           (our-every fn (cdr lst))))) ;; 然后在cdr上递归，将car的结果和cdr的结果用and连接
+
+
+;; 这些函数无论从函数定义的表达式形状还是从逻辑（其实是一回事，毕竟逻辑由函数定义来展现）来看都有其共同之处：
+;; 1. 他们都需要一个base case
+;; 2. 他们都在cdr上做递归调用
+
+;; 另外，前两个将函数逻辑将car上调用的逻辑 (our-length是不管什么，都认定为长度1，our-every-oddp是调用oddp)写死在函数实现里，
+;; 而最后一个函数将逻辑以参数形式传入 (fn)。
+;; 但这三者car 和 cdr 调用结果的连接逻辑都写死在了函数实现里 (第一个是+1,第二个和第三个是and)
+
+;; 考虑到这些共同的模式，现在我们考虑构造一个通用的函数或者宏，用它来替代上面这些共同模式函数:
+;; 1. base case            都不一样，由外界传入
+;; 2. 在cdr上递归            是一个共同模式，写死在实现里
+;; 3. car上的处理逻辑        不是共同模式，由外界传入
+;; 4. 如何连接car和cdr的结果  不是共同模式， 由外界传入
+(defun lrec (car-fn conc-fn base)
+  (labels ((self (lst)       ;; 这里假设产生的函数只接受一个list参数，其他处理逻辑在生成函数的时候指定
+             (if (null lst)
+                 base        ;; base case
+                 (funcall conc-fn
+                          (funcall car-fn (car lst))
+                          (self (cdr lst))))))  ;; 调用连接函数，将car的结果和cdr的结果连接
+    #'self))  ;; 这里使用labels定义一个内置的函数self,在将其返回的原因是，在cdr上递归调用的时候，需要使用这个生成的self
+
+
+
+
+;; 这样，our-length可以写成
+(defun nil->0 (n) ;; 辅助函数
+  (if n n 0))
+;; 这个函数等价于our-length
+(lrec (lambda (x) (declare (ignore x)))
+      (lambda (x1 x2) (+ (nil->0 x1)
+                    (nil->0 x2)))
+      0)
+
+;; 给他封装个名字
+(defun our-length2 (lst)
+  (funcall (lrec (lambda (x) (declare (ignore x)) 1)
+                 (lambda (x1 x2) (+ (nil->0 x1)
+                               (nil->0 x2)))
+                 0)
+           lst))
+
+;; 这样our-every-oddp可以写成
+(defun our-every-oddp2 (lst)
+  (funcall (lrec (lambda (x) (oddp x))
+                 (lambda (x1 x2) (and x1 x2))
+                 t)
+           lst))
+
+;; 这样上面的our-every可以写成
+;; 考虑到our-every的car-fn是以参数形式传入的
+(defun our-every2 (fn lst)
+  (funcall (lrec fn ;; 这里的fn就是car-fn
+                 (lambda (x1 x2) (and x1 x2))
+                 t)
+           lst))
+
+;; 利用lrec，我们再来定义以下函数
+;; 复制列表的copy-list
+(defun our-copy-list (lst)
+  (funcall (lrec (lambda (x) x)
+                 (lambda (x1 x2) (cons x1 x2))
+                 nil)
+           lst))
+
+;; 移除重复元素的remove-duplicates
+(defun our-remove-duplicates (lst)
+  (funcall (lrec (lambda (x) x)
+                 (lambda (x1 x2) (adjoin x1 x2))
+                 nil)
+           lst))
+;; 另一个版本的find-if
+(defun our-find-if (fn lst)
+  (funcall (lrec (lambda (x) (and (funcall fn x) x))  ;; 这里用and是为了返回找到的这个元素，不然可以直接(funcall fn x)
+                 (lambda (x1 x2) (if x1 x1 x2))
+                 nil)
+           lst))
+
+;; 另一个版本的some
+(defun our-some (fn lst)
+  (funcall (lrec (lambda (x) (funcall fn x))
+                 (lambda (x1 x2) (or x1 x2))
+                 nil)
+           lst))
+
+
+
+;; 在onlisp书上5.5章节上提到的lrec和我这边的实现方式有些不同
+;; 与我上面的版本相比，这个版本将如何处理递归放到一个函数里，而不像我逻辑上分成处理car的和处理conc的
+;; 他是将conc-fn和car-fn合成一个函数rec传入
+;; rec接收两个参数，第一个是(car lst), 第二个递归调用f, (funcall f)会返回递归调用之后项的结果
+(defun lrec-onlisp-book-version (rec &optional base)
+  (labels ((self (lst)
+             (if (null lst)
+                 base
+                 (funcall rec (car lst)
+                          #'(lambda ()
+                              (self (cdr lst)))))))
+    #'self))
+
+;; 使用这个版本，our-length可以写成
+(defun our-length3 (lst)
+  (funcall (lrec-onlisp-book-version
+            (lambda (x f)
+              (declare (ignore x))
+              (1+ (funcall f))) 
+            0)
+           lst))
+
+;; 使用这个版本，our-every-oddp可以写成
+(defun our-every-oddp3 (lst)
+  (funcall (lrec-onlisp-book-version
+            (lambda (x f)
+              (and (oddp x) (funcall f))) 
+            t)
+           lst))
+
+;; 使用这个版本，our-every可以写成
+(defun our-every3 (fn lst)
+  (funcall (lrec-onlisp-book-version
+            (lambda (x f)
+              (and (funcall fn x) (funcall f))) 
+            t)
+           lst))
+
+
+
+;; 变形
+;; 看到上面lrec-onlisp-book-version的时候，我想为什么f会以这种方式来用呢？
+;; 我做了下尝试
+(defun lrec-onlisp-book-version2 (rec &optional base)
+  (labels ((self (lst)
+             (if (null lst)
+                 base
+                 (funcall rec (car lst)
+                          (self (cdr lst))))))
+    #'self))
+
+;; 使用这个版本，our-length可以写成
+(defun our-length4 (lst)
+  (funcall (lrec-onlisp-book-version2
+            (lambda (x f)
+              (declare (ignore x))
+              (1+ (funcall f))) 
+            0)
+           lst))
+
+;; 使用这个版本，our-every-oddp可以写成
+(defun our-every-oddp4 (lst)
+  (funcall (lrec-onlisp-book-version2
+            (lambda (x f)
+              (and (oddp x) f)) 
+            t)
+           lst))
+
+;; 使用这个版本，our-every可以写成
+(defun our-every4 (fn lst)
+  (funcall (lrec-onlisp-book-version2
+            (lambda (x f)
+              (and (funcall fn x) f)) 
+            t)
+           lst))
+
+;; 其实这里的f更像是一个值的累积。
+;; 手动演算下lrec-onlisp-book-version和lrec-onlisp-book-version2 产生的函数的计算过程
+;; 可以感受到两者的差别:
+;; lrec-onlisp-book-version版本由于递归传入的是一个函数，实际上先计算的是列表前面的元素
+;; 而lrec-onlisp-book-version2版本由于递归传入的是值，所以在展开调用的过程中，不断先求值它的参数，
+;; 所以实际上先计算的是列表后面的元素
+;; 而之前的lrec版本类似后面这种，先求值后面的元素
+;; 总体上我觉得lrec-onlisp-book-version这样的方式更加合理些。
+
+
+;; ;; 调用求值顺序打印示意
+;; (defun lrec-onlisp-book-version (rec &optional base)
+;;   (labels ((self (lst)
+;;              (print "eval self")
+;;              (if (null lst)
+;;                  base
+;;                  (funcall rec (car lst)
+;;                           #'(lambda ()
+;;                               (self (cdr lst)))))))
+;;     #'self))
+
+;; (defun our-length3 (lst)
+;;   (funcall (lrec-onlisp-book-version
+;;             (lambda (x f)
+;;               (declare (ignore x))
+;;               (print "eval rec")
+;;               (1+ (funcall f))) 
+;;             0)
+;;            lst))
+
+;; (defun lrec-onlisp-book-version2 (rec &optional base)
+;;   (labels ((self (lst)
+;;              (print "eval self")
+;;              (if (null lst)
+;;                  base
+;;                  (funcall rec (car lst)
+;;                           (self (cdr lst))))))
+;;     #'self))
+
+;; (defun our-length4 (lst)
+;;   (funcall (lrec-onlisp-book-version2
+;;             (lambda (x f)
+;;               (declare (ignore x))
+;;               (print "eval rec")
+;;               (1+ f)) 
+;;             0)
+;;            lst))
+
+
+;; CL-USER> (our-length3 '(1 2 3 4))
+
+;; "eval self" 
+;; "eval rec" 
+;; "eval self" 
+;; "eval rec" 
+;; "eval self" 
+;; "eval rec" 
+;; "eval self" 
+;; "eval rec" 
+;; "eval self" 
+;; 4
+
+
+;; CL-USER> (our-length4 '(1 2 3 4))
+
+;; "eval self" 
+;; "eval self" 
+;; "eval self" 
+;; "eval self" 
+;; "eval self" 
+;; "eval rec" 
+;; "eval rec" 
+;; "eval rec" 
+;; "eval rec" 
+;; 4
+
+;; ;; lrec版本的求值顺序
+;; (defun lrec (car-fn conc-fn base)
+;;   (labels ((self (lst)       ;; 这里假设产生的函数只接受一个list参数，其他处理逻辑在生成函数的时候指定
+;;              (print "eval self")
+;;              (if (null lst)
+;;                  base ;; base case
+;;                  (funcall conc-fn
+;;                           (funcall car-fn (car lst))
+;;                           (self (cdr lst))))))  ;; 调用连接函数，将car的结果和cdr的结果连接
+;;     #'self))
+
+;; (defun our-length2 (lst)
+;;   (funcall (lrec (lambda (x) (declare (ignore x)) (print "eval car-fn") 1)
+;;                  (lambda (x1 x2) (print "eval conc-fn") (+ (nil->0 x1)
+;;                                                       (nil->0 x2)))
+;;                  0)
+;;            lst))
+
+;; CL-USER> (our-length2 '(1 2 3 4))
+
+;; "eval self" 
+;; "eval car-fn" 
+;; "eval self" 
+;; "eval car-fn" 
+;; "eval self" 
+;; "eval car-fn" 
+;; "eval self" 
+;; "eval car-fn" 
+;; "eval self" 
+;; "eval conc-fn" 
+;; "eval conc-fn" 
+;; "eval conc-fn" 
+;; "eval conc-fn" 
+;; 4
+
+
+;; 可以观察到一些异同
+
+
+
+
+
+;; 接下来，让我们以宏的方式来构造lrec，从而简化使用，因为目前传入的都是函数，不是很直观
+;; 按照onlisp chapter5.5上的lrec定义如下
+(defun lrec2 (rec &optional base)
+  (labels ((self (lst)
+             (if (null lst)
+                 (if (functionp base)
+                     (funcall base)
+                     base)  ;; 以防传进来的base是一个封装的function
+                 (funcall rec (car lst)
+                          #'(lambda ()
+                              (self (cdr lst)))))))
+    #'self))
+
+
+(defmacro alrec (rec &optional base)
+  (let ((gfn (gensym)))
+    `(lrec2
+      #'(lambda (it ,gfn)
+          (symbol-macrolet ((rec (funcall ,gfn)))
+            ,rec))
+      ,base)))
+
+
+;; 这里的alrec宏方便了lrec2的使用:
+;; 比如说之前通过lrec2定义our-every-oddp时需要这样
+(lrec2 (lambda (x f) (and (oddp x) (funcall f)))
+       t)
+
+;; 使用alrec可以简化这一流程
+(alrec (and (oddp it) rec)
+       t)
+
+;; 上面的表达式展开为
+(LREC2
+ #'(LAMBDA (IT #:G582)
+     (SYMBOL-MACROLET ((REC (FUNCALL #:G582)))
+       (AND (ODDP IT) REC)))
+ T)
+
+
+;; 这里采用了指代宏来简化这一方法
+;; it 表示car list
+;; rec 表示 递归调用
+;; 用宏生成外面的lambda
+
+;; 使用这个版本，our-length可以写成
+(defun our-length5 (lst)
+  (funcall (alrec (1+ rec) 0)
+           lst))
+
+;; 使用这个版本，our-every-oddp可以写成
+(defun our-every-oddp5 (lst)
+  (funcall (alrec (and (oddp it) rec) t)
+           lst))
+
+;; 使用这个版本，our-every可以写成
+(defun our-every5 (fn lst)
+  (funcall (alrec (and (apply fn it) rec) t)
+           lst))
+
+;; 考虑到上面都是采用funcall 这种形式
+;;(其实采用funcall这种形式是因为下面这一的定义是不行的)
+;; (defun our-length-failed (lst)
+;;   ((alrec (1+ rec) 0) lst))
+
+;; 可以再用宏on-cdrs简化这一模式
+(defmacro on-cdrs (rec base &rest lsts)
+  `(funcall (alrec ,rec #'(lambda () ,base))  ;; 这里将base用function包裹传入，如果base是个复杂的expression的话，防止base被求值多次，包裹后只在最后一次求值
+            ,@lsts))
+
+;; 使用这个版本，our-length可以写成
+(defun our-length6 (lst)
+  (on-cdrs (1+ rec) 0 lst))
+
+;; 使用这个版本，our-every-oddp可以写成
+(defun our-every-oddp6 (lst)
+  (on-cdrs (and (oddp it) rec) t lst))
+
+;; 使用这个版本，our-every可以写成
+(defun our-every6 (fn lst)
+  (on-cdrs (and (funcall fn it) rec) t lst))
+
+;; 使用on-cdrs定义一些实用函数
+;; 该版本相比union可以接收多个lists
+(defun unions (&rest sets)
+  (on-cdrs (union it rec) (car sets) (cdr sets)))
+
+(defun intersections (&rest sets)
+  (unless (some #'null sets)
+    (on-cdrs (intersection it rec) (car sets) (cdr sets))))
+
+(defun differences (set &rest outs)
+  (on-cdrs (set-difference rec it) set outs))
+
+;; maxmin 返回args里最大值和最小值
+;; 这边涉及到多只递归的方式有些费解啊
+(defun maxmin (args)
+  (when args
+    (on-cdrs (multiple-value-bind (mx mn) rec ;; 这里将rec考虑成递归调用的结果,一个最大值，一个最小值
+               (values (max mx it) (min mn it))) ;; 所以这里返回比较后的大的值和小的值
+             (values (car args) (car args))
+             (cdr args))))
+
+
